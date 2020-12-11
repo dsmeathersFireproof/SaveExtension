@@ -31,7 +31,7 @@ class USlotDataTask_Saver : public USlotDataTask
 
 	bool bOverride;
 	bool bSaveThumbnail;
-	int32 Slot;
+	FName SlotName;
 	int32 Width;
 	int32 Height;
 
@@ -62,9 +62,9 @@ public:
 		, SaveTask(nullptr)
 	{}
 
-	auto* Setup(int32 InSlot, bool bInOverride, bool bInSaveThumbnail, const int32 InWidth, const int32 InHeight)
+	auto* Setup(FName InSlotName, bool bInOverride, bool bInSaveThumbnail, const int32 InWidth, const int32 InHeight)
 	{
-		Slot = InSlot;
+		SlotName = InSlotName;
 		bOverride = bInOverride;
 		bSaveThumbnail = bInSaveThumbnail;
 		Width = InWidth;
@@ -84,11 +84,13 @@ public:
 protected:
 
 	/** BEGIN Serialization */
-	void SerializeSync();
-	void SerializeLevelSync(const ULevel* Level, int32 AssignedThreads, const ULevelStreaming* StreamingLevel = nullptr);
-
 	/** Serializes all world actors. */
 	void SerializeWorld();
+
+	void PrepareAllLevels(const TArray<ULevelStreaming*>& Levels);
+
+	void SerializeLevelSync(const ULevel* Level, int32 AssignedThreads, const ULevelStreaming* StreamingLevel = nullptr);
+
 	/** END Serialization */
 
 	void RunScheduledTasks();
@@ -96,6 +98,6 @@ protected:
 private:
 
 	/** BEGIN FileSaving */
-	void SaveFile(const FString& InfoName, const FString& DataName);
+	void SaveFile();
 	/** End FileSaving */
 };

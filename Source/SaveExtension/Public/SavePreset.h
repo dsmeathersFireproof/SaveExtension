@@ -39,13 +39,13 @@ public:
 	* Specify the SaveInfo object to be used with this preset
 	*/
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
-	TSubclassOf<USlotInfo> SlotInfoTemplate;
+	TSubclassOf<USlotInfo> SlotInfoClass;
 
 	/**
 	* Specify the SaveData object to be used with this preset
 	*/
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
-	TSubclassOf<USlotData> SlotDataTemplate;
+	TSubclassOf<USlotData> SlotDataClass;
 
 	/** Maximum amount of saved slots at the same time */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Gameplay, meta = (ClampMin = "0"))
@@ -82,7 +82,6 @@ public:
 	bool bDebugInScreen = true;
 
 
-
 	/** If true save files will be compressed
 	 * Performance: Can add from 10ms to 20ms to loading and saving (estimate) but reduce file sizes making them up to 30x smaller
 	 */
@@ -91,31 +90,31 @@ public:
 
 	/** If true will store the game instance */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Serialization)
-	bool bStoreGameInstance = false;
+	bool bStoreGameInstance = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization|Actors")
-	FActorClassFilter ActorFilter;
+	FSEActorClassFilter ActorFilter;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization|Actors", meta = (PinHiddenByDefault, InlineEditConditionToggle))
 	bool bUseLoadActorFilter = false;
 
 	/** If enabled, this filter will be used while loading instead of "ActorFilter" */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization|Actors", meta = (EditCondition="bUseLoadActorFilter"))
-	FActorClassFilter LoadActorFilter;
+	FSEActorClassFilter LoadActorFilter;
 
 	/** If true will store ActorComponents depending on the filters */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization|Components")
 	bool bStoreComponents = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization|Components")
-	FComponentClassFilter ComponentFilter;
+	FSEComponentClassFilter ComponentFilter;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization|Components", meta = (PinHiddenByDefault, InlineEditConditionToggle))
 	bool bUseLoadComponentFilter = false;
 
 	/** If enabled, this filter will be used while loading instead of "ComponentFilter" */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Serialization|Components", meta = (EditCondition = "bUseLoadComponentFilter"))
-	FComponentClassFilter LoadComponentFilter;
+	FSEComponentClassFilter LoadComponentFilter;
 
 public:
 
@@ -156,54 +155,84 @@ public:
 
 	USavePreset();
 
+	UFUNCTION(BlueprintNativeEvent, Category = "Slots", meta = (DisplayName="Get Slot Name from Id"))
+	void BPGetSlotNameFromId(int32 Id, FName& Name) const;
+
+protected:
+
+	virtual void GetSlotNameFromId(int32 Id, FName& Name) const;
+
 
 	/** HELPERS */
+public:
 
-	FORCEINLINE int32 GetMaxSlots() const {
-		return MaxSlots <= 0 ? 16384 : MaxSlots;
-	}
+	int32 GetMaxIds() const;
+
+	bool IsValidId(int32 Id) const;
 
 	UFUNCTION(BlueprintPure, Category = SavePreset)
-	FORCEINLINE FActorClassFilter& GetActorFilter(bool bIsLoading) {
+	FSEActorClassFilter& GetActorFilter(bool bIsLoading)
+	{
 		return (bIsLoading && bUseLoadActorFilter)? LoadActorFilter : ActorFilter;
 	}
 
-	FORCEINLINE const FActorClassFilter& GetActorFilter(bool bIsLoading) const {
+	const FSEActorClassFilter& GetActorFilter(bool bIsLoading) const
+	{
 		return (bIsLoading && bUseLoadActorFilter)? LoadActorFilter : ActorFilter;
 	}
 
 	UFUNCTION(BlueprintPure, Category = SavePreset)
-	FORCEINLINE FComponentClassFilter& GetComponentFilter(bool bIsLoading) {
+	FSEComponentClassFilter& GetComponentFilter(bool bIsLoading)
+	{
 		return (bIsLoading && bUseLoadComponentFilter) ? LoadComponentFilter : ComponentFilter;
 	}
 
-	FORCEINLINE const FComponentClassFilter& GetComponentFilter(bool bIsLoading) const {
+	const FSEComponentClassFilter& GetComponentFilter(bool bIsLoading) const
+	{
 		return (bIsLoading && bUseLoadActorFilter) ? LoadComponentFilter : ComponentFilter;
 	}
 
-	FORCEINLINE bool IsMTSerializationLoad() const {
+	bool IsMTSerializationLoad() const
+	{
 		return MultithreadedSerialization == ESaveASyncMode::LoadAsync || MultithreadedSerialization == ESaveASyncMode::SaveAndLoadAsync;
 	}
-	FORCEINLINE bool IsMTSerializationSave() const {
+	bool IsMTSerializationSave() const
+	{
 		return MultithreadedSerialization == ESaveASyncMode::SaveAsync || MultithreadedSerialization == ESaveASyncMode::SaveAndLoadAsync;
 	}
 
-	FORCEINLINE ESaveASyncMode GetFrameSplitSerialization() const { return FrameSplittedSerialization; }
-	FORCEINLINE float GetMaxFrameMs() const { return MaxFrameMs; }
+	ESaveASyncMode GetFrameSplitSerialization() const { return FrameSplittedSerialization; }
+	float GetMaxFrameMs() const { return MaxFrameMs; }
 
-	FORCEINLINE bool IsFrameSplitLoad() const {
+	bool IsFrameSplitLoad() const
+	{
 		return !IsMTSerializationLoad() && (FrameSplittedSerialization == ESaveASyncMode::LoadAsync || FrameSplittedSerialization == ESaveASyncMode::SaveAndLoadAsync);
 	}
-	FORCEINLINE bool IsFrameSplitSave() const {
+	bool IsFrameSplitSave() const
+	{
 		return !IsMTSerializationSave() && (FrameSplittedSerialization == ESaveASyncMode::SaveAsync || FrameSplittedSerialization == ESaveASyncMode::SaveAndLoadAsync);
 	}
 
-	FORCEINLINE bool IsMTFilesLoad() const {
+	bool IsMTFilesLoad() const
+	{
 		return MultithreadedFiles == ESaveASyncMode::LoadAsync || MultithreadedFiles == ESaveASyncMode::SaveAndLoadAsync;
 	}
-	FORCEINLINE bool IsMTFilesSave() const {
+	bool IsMTFilesSave() const
+	{
 		return MultithreadedFiles == ESaveASyncMode::SaveAsync || MultithreadedFiles == ESaveASyncMode::SaveAndLoadAsync;
 	}
 
-	struct FSaveFilter ToFilter() const;
+	struct FSELevelFilter ToFilter() const;
 };
+
+
+inline int32 USavePreset::GetMaxIds() const
+{
+	return MaxSlots <= 0 ? 16384 : MaxSlots;
+}
+
+inline bool USavePreset::IsValidId(int32 Id) const
+{
+	const int32 MaxIds = GetMaxIds();
+	return Id >= 0 && (MaxIds <= 0 || Id < MaxIds);
+}

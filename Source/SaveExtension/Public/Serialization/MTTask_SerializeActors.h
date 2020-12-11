@@ -32,9 +32,10 @@ class FMTTask_SerializeActors : public FMTTask
 	const TArray<AActor*>* const LevelActors;
 	const int32 StartIndex;
 	const int32 Num;
+	const bool bStoreGameInstance = false;
 
 	/** USE ONLY FOR DUMPING DATA */
-	int LevelRecordId;
+	FLevelRecord* LevelRecord = nullptr;
 
 	FActorRecord LevelScriptRecord;
 	TArray<FActorRecord> ActorRecords;
@@ -42,13 +43,14 @@ class FMTTask_SerializeActors : public FMTTask
 
 public:
 	FMTTask_SerializeActors(const UWorld* World, USlotData* SlotData,
-		const TArray<AActor*>* const InLevelActors, const int32 InStartIndex, const int32 InNum,
-		int InLevelRecordId, const FSaveFilter& Filter)
+		const TArray<AActor*>* const InLevelActors, const int32 InStartIndex, const int32 InNum, bool bStoreGameInstance,
+		FLevelRecord* InLevelRecord, const FSELevelFilter& Filter)
 		: FMTTask(false, World, SlotData, Filter)
 		, LevelActors(InLevelActors)
 		, StartIndex(InStartIndex)
 		, Num(InNum)
-		, LevelRecordId(InLevelRecordId)
+		, bStoreGameInstance(bStoreGameInstance)
+		, LevelRecord(InLevelRecord)
 		, LevelScriptRecord{}
 		, ActorRecords{}
 	{
@@ -60,9 +62,6 @@ public:
 
 	/** Called after task has completed to recover resulting information */
 	void DumpData() {
-
-		FLevelRecord* LevelRecord = SlotData->GetLevelRecord(LevelRecordId);
-
 		if (LevelScriptRecord.IsValid())
 			LevelRecord->LevelScript = LevelScriptRecord;
 

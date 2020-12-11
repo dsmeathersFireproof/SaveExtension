@@ -2,14 +2,15 @@
 
 #include "Serialization/SlotDataTask_Saver.h"
 
+#include "FileAdapter.h"
+#include "Misc/SlotHelpers.h"
+#include "SaveManager.h"
+#include "SavePreset.h"
+#include "SlotData.h"
+#include "SlotInfo.h"
+
 #include <GameFramework/GameModeBase.h>
 #include <Serialization/MemoryWriter.h>
-
-#include "SaveManager.h"
-#include "SlotInfo.h"
-#include "SlotData.h"
-#include "SavePreset.h"
-#include "FileAdapter.h"
 
 
 /////////////////////////////////////////////////////
@@ -17,35 +18,28 @@
 
 void USlotDataTask_Saver::OnStart()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USlotDataTask_Saver::OnStart);
 	USaveManager* Manager = GetManager();
 	Manager->TryInstantiateInfo();
 
 	bool bSave = true;
-	const FString InfoCard = Manager->GenerateSlotInfoName(Slot);
-	const FString DataCard = Manager->GenerateSlotDataName(Slot);
-
-	//Overriding
+	const FString SlotNameStr = SlotName.ToString();
+	// Overriding
 	{
-		const bool bInfoExists = FFileAdapter::DoesFileExist(InfoCard);
-		const bool bDataExists = FFileAdapter::DoesFileExist(DataCard);
-
+		const bool bFileExists = FFileAdapter::DoesFileExist(SlotNameStr);
 		if (bOverride)
 		{
 			// Delete previous save
-			if (bInfoExists)
+			if (bFileExists)
 			{
-				FFileAdapter::DeleteFile(InfoCard);
-			}
-			if (bDataExists)
-			{
-				FFileAdapter::DeleteFile(DataCard);
+				FFileAdapter::DeleteFile(SlotNameStr);
 			}
 		}
 		else
 		{
-			//Only save if previous files don't exist
-			//We don't want to serialize since it won't be saved anyway
-			bSave = !bInfoExists && !bDataExists;
+			// Only save if previous files don't exist
+			// We don't want to serialize since it won't be saved anyway
+			bSave = !bFileExists;
 		}
 	}
 
@@ -53,17 +47,16 @@ void USlotDataTask_Saver::OnStart()
 	{
 		const UWorld* World = GetWorld();
 
-		GetManager()->OnSaveBegan(Filter);
+		GetManager()->OnSaveBegan(GetGeneralFilter());
 
 		SlotInfo = Manager->GetCurrentInfo();
 		SlotData = Manager->GetCurrentData();
-		SlotData->Clean(true);
-
+		SlotData->CleanRecords(true);
 
 		check(SlotInfo && SlotData);
 
-		const bool bSlotWasDifferent = SlotInfo->Id != Slot;
-		SlotInfo->Id = Slot;
+		const bool bSlotWasDifferent = SlotInfo->FileName != SlotName;
+		SlotInfo->FileName = SlotName;
 
 		if (bSaveThumbnail)
 		{
@@ -99,12 +92,15 @@ void USlotDataTask_Saver::OnStart()
 			SlotData->TimeSeconds = World->TimeSeconds;
 		}
 
-		//Save Level info in both files
-		SlotInfo->Map = World->GetFName();
-		SlotData->Map = World->GetFName().ToString();
+		// Save Level info in both files
+		SlotInfo->Map = FName{FSlotHelpers::GetWorldName(World)};
+		SlotData->Map = SlotData->Map;
 
-		SerializeSync();
-		SaveFile(InfoCard, DataCard);
+		SlotData->bStoreGameInstance = Preset->bStoreGameInstance;
+		SlotData->GeneralLevelFilter = Preset->ToFilter();
+
+		SerializeWorld();
+		SaveFile();
 		return;
 	}
 	Finish(false);
@@ -112,6 +108,7 @@ void USlotDataTask_Saver::OnStart()
 
 void USlotDataTask_Saver::Tick(float DeltaTime)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USlotDataTask_Saver::Tick);
 	Super::Tick(DeltaTime);
 
 	if (SaveTask && SaveTask->IsDone())
@@ -132,10 +129,11 @@ void USlotDataTask_Saver::Tick(float DeltaTime)
 
 void USlotDataTask_Saver::OnFinish(bool bSuccess)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USlotDataTask_Saver::OnFinish);
 	if (bSuccess)
 	{
 		// Clean serialization data
-		SlotData->Clean(true);
+		SlotData->CleanRecords(true);
 
 		SELog(Preset, "Finished Saving", FColor::Green);
 	}
@@ -143,8 +141,8 @@ void USlotDataTask_Saver::OnFinish(bool bSuccess)
 	// Execute delegates
 	USaveManager* Manager = GetManager();
 	check(Manager);
-	Delegate.ExecuteIfBound((Manager && bSuccess)? Manager->GetCurrentInfo() : nullptr);
-	Manager->OnSaveFinished(Filter, !bSuccess);
+	Delegate.ExecuteIfBound((Manager && bSuccess) ? Manager->GetCurrentInfo() : nullptr);
+	Manager->OnSaveFinished(SlotData ? GetGeneralFilter() : FSELevelFilter{}, !bSuccess);
 }
 
 void USlotDataTask_Saver::BeginDestroy()
@@ -158,28 +156,25 @@ void USlotDataTask_Saver::BeginDestroy()
 	Super::BeginDestroy();
 }
 
-void USlotDataTask_Saver::SerializeSync()
-{
-	// Has Authority
-	if (GetWorld()->GetAuthGameMode())
-	{
-		// Save World
-		SerializeWorld();
-	}
-}
-
 void USlotDataTask_Saver::SerializeWorld()
 {
-	const UWorld* World = GetWorld();
+	TRACE_CPUPROFILER_EVENT_SCOPE(USlotDataTask_Saver::SerializeWorld);
 
+	// Must have Authority
+	if (!GetWorld()->GetAuthGameMode())
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
 	SELog(Preset, "World '" + World->GetName() + "'", FColor::Green, false, 1);
 
 	const TArray<ULevelStreaming*>& Levels = World->GetStreamingLevels();
+	PrepareAllLevels(Levels);
 
 	// Threads available + 1 (Synchronous Thread)
 	const int32 NumberOfThreads = FMath::Max(1, FPlatformMisc::NumberOfWorkerThreadsToSpawn() + 1);
 	const int32 TasksPerLevel = FMath::Max(1, FMath::RoundToInt(float(NumberOfThreads) / (Levels.Num() + 1)));
-
 	Tasks.Reserve(NumberOfThreads);
 
 	SerializeLevelSync(World->GetCurrentLevel(), TasksPerLevel);
@@ -194,36 +189,51 @@ void USlotDataTask_Saver::SerializeWorld()
 	RunScheduledTasks();
 }
 
-void USlotDataTask_Saver::SerializeLevelSync(const ULevel* Level, int32 AssignedTasks, const ULevelStreaming* StreamingLevel)
+void USlotDataTask_Saver::PrepareAllLevels(const TArray<ULevelStreaming*>& Levels)
 {
+	BakeAllFilters();
+
+	// Create the sub-level records if non existent
+	for (const ULevelStreaming* Level : Levels)
+	{
+		if (Level->IsLevelLoaded())
+		{
+			SlotData->SubLevels.AddUnique({*Level});
+		}
+	}
+}
+
+void USlotDataTask_Saver::SerializeLevelSync(
+	const ULevel* Level, int32 AssignedTasks, const ULevelStreaming* StreamingLevel)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(USlotDataTask_Saver::SerializeLevelSync);
 	check(IsValid(Level));
 
 	if (!Preset->IsMTSerializationSave())
+	{
 		AssignedTasks = 1;
+	}
 
-	const FName LevelName = StreamingLevel ? StreamingLevel->GetWorldAssetPackageFName() : FPersistentLevelRecord::PersistentName;
+	const FName LevelName =
+		StreamingLevel ? StreamingLevel->GetWorldAssetPackageFName() : FPersistentLevelRecord::PersistentName;
 	SELog(Preset, "Level '" + LevelName.ToString() + "'", FColor::Green, false, 1);
-
 
 	// Find level record. By default, main level
 	int LevelRecordId = USlotData::MainLevelRecordId;
 	if (StreamingLevel)
 	{
-		// Find or create the sub-level
-		const int32 Index = SlotData->SubLevels.AddUnique({ StreamingLevel });
-		LevelRecordId = Index;
+		LevelRecord = FindLevelRecord(StreamingLevel);
 	}
 
 	// Empty level record before serializing it
-	SlotData->GetLevelRecord(LevelRecordId)->Clean();
+	LevelRecord->CleanRecords();
 
-	Filter.BakeAllowedClasses();
+	auto& Filter = GetLevelFilter(*LevelRecord);
 
 	const int32 MinObjectsPerTask = 40;
 	const int32 ActorCount = Level->Actors.Num();
 	const int32 NumBalancedPerTask = FMath::CeilToInt((float) ActorCount / AssignedTasks);
 	const int32 NumPerTask = FMath::Max(NumBalancedPerTask, MinObjectsPerTask);
-
 
 	// Split all actors between multi-threaded tasks
 	int32 Index = 0;
@@ -232,9 +242,11 @@ void USlotDataTask_Saver::SerializeLevelSync(const ULevel* Level, int32 Assigned
 		const int32 NumRemaining = ActorCount - Index;
 		const int32 NumToSerialize = FMath::Min(NumRemaining, NumPerTask);
 
+		// First task saves the GameInstance
+		bool bStoreGameInstance = Index <= 0 && SlotData->bStoreGameInstance;
 		// Add new Task
-		Tasks.Emplace(FMTTask_SerializeActors{
-			GetWorld(), SlotData, &Level->Actors, Index, NumToSerialize, LevelRecordId, Filter});
+		Tasks.Emplace(FMTTask_SerializeActors{GetWorld(), SlotData, &Level->Actors, Index, NumToSerialize,
+			bStoreGameInstance, LevelRecord, Filter});
 
 		Index += NumToSerialize;
 	}
@@ -242,6 +254,7 @@ void USlotDataTask_Saver::SerializeLevelSync(const ULevel* Level, int32 Assigned
 
 void USlotDataTask_Saver::RunScheduledTasks()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USlotDataTask_Saver::RunScheduledTasks);
 	// Start all serialization tasks
 	if (Tasks.Num() > 0)
 	{
@@ -268,14 +281,13 @@ void USlotDataTask_Saver::RunScheduledTasks()
 	Tasks.Empty();
 }
 
-void USlotDataTask_Saver::SaveFile(const FString& InfoName, const FString& DataName)
+void USlotDataTask_Saver::SaveFile()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USlotDataTask_Saver::SaveFile);
 	USaveManager* Manager = GetManager();
 
-	USlotInfo* CurrentInfo = Manager->GetCurrentInfo();
-	USlotData* CurrentData = Manager->GetCurrentData();
-
-	SaveTask = new FAsyncTask<FSaveFileTask>(CurrentInfo, CurrentData, InfoName, Preset->bUseCompression);
+	SaveTask = new FAsyncTask<FSaveFileTask>(
+		Manager->GetCurrentInfo(), Manager->GetCurrentData(), SlotName.ToString(), Preset->bUseCompression);
 
 	if (Preset->IsMTFilesSave())
 	{

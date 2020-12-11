@@ -6,12 +6,12 @@
 #include <UObject/UObjectIterator.h>
 
 
-FClassFilter::FClassFilter(UClass* BaseClass)
+FSEClassFilter::FSEClassFilter(UClass* BaseClass)
 	: BaseClass{ BaseClass }
 	, IgnoredClasses {}
 {}
 
-void FClassFilter::Merge(const FClassFilter& Other)
+void FSEClassFilter::Merge(const FSEClassFilter& Other)
 {
 	// Remove conflicts
 	for (const auto& IgnoredClass : Other.IgnoredClasses)
@@ -27,8 +27,9 @@ void FClassFilter::Merge(const FClassFilter& Other)
 	IgnoredClasses.Append(Other.IgnoredClasses);
 }
 
-void FClassFilter::BakeAllowedClasses() const
+void FSEClassFilter::BakeAllowedClasses() const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FSEClassFilter::BakeAllowedClasses);
 	BakedAllowedClasses.Empty();
 
 	if(AllowedClasses.Num() <= 0)
@@ -36,46 +37,55 @@ void FClassFilter::BakeAllowedClasses() const
 		return;
 	}
 
-	for (TObjectIterator<UClass> It; It; ++It)
+	TArray<UClass*> ChildrenOfAllowedClasses;
 	{
-		UClass* const Class = *It;
-
-		// Iterate parent classes of a class
-		const UClass* CurrentClass = Class;
-		while (CurrentClass)
+		TRACE_CPUPROFILER_EVENT_SCOPE(First Pass: Potential classes);
+		for(auto& AllowedClass : AllowedClasses)
 		{
-			// If parent class is allowed, we are allowed.
-			// This prevents iteration to the first allowed. May not be worth it for performance
-			if (BakedAllowedClasses.Contains(CurrentClass))
+			UClass* const AllowedClassPtr = AllowedClass.Get();
+
+			if(!AllowedClassPtr)
 			{
-				BakedAllowedClasses.Add(Class);
-				break;
+				continue;
 			}
 
-			if (AllowedClasses.Contains(CurrentClass))
+			BakedAllowedClasses.Add(AllowedClassPtr);
+			GetDerivedClasses(AllowedClassPtr, ChildrenOfAllowedClasses);
+		}
+	}
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Second Pass: Bake Classes);
+		for (UClass* Class : ChildrenOfAllowedClasses)
+		{
+			// Iterate parent classes of a class
+			const UClass* ParentClass = Class;
+			while (ParentClass)
 			{
-				// First parent allowed class marks it as allowed
-				BakedAllowedClasses.Add(Class);
-				break;
+				if (BakedAllowedClasses.Contains(ParentClass))
+				{
+					// First parent allowed class marks it as allowed
+					BakedAllowedClasses.Add(Class);
+					break;
+				}
+				else if (IgnoredClasses.Contains(ParentClass))
+				{
+					// First parent ignored class marks it as not allowed
+					break;
+				}
+				ParentClass = ParentClass->GetSuperClass();
 			}
-			else if (IgnoredClasses.Contains(CurrentClass))
-			{
-				// First parent ignored class marks it as not allowed
-				break;
-			}
-			CurrentClass = CurrentClass->GetSuperClass();
 		}
 	}
 }
 
-FString FClassFilter::ToString()
+FString FSEClassFilter::ToString()
 {
 	FString ExportString;
-	FClassFilter::StaticStruct()->ExportText(ExportString, this, this, nullptr, 0, nullptr);
+	FSEClassFilter::StaticStruct()->ExportText(ExportString, this, this, nullptr, 0, nullptr);
 	return ExportString;
 }
 
-void FClassFilter::FromString(FString String)
+void FSEClassFilter::FromString(FString String)
 {
 	if (String.StartsWith(TEXT("(")) && String.EndsWith(TEXT(")")))
 	{
@@ -115,7 +125,7 @@ void FClassFilter::FromString(FString String)
 	}
 }
 
-bool FClassFilter::operator==(const FClassFilter& Other) const
+bool FSEClassFilter::operator==(const FSEClassFilter& Other) const
 {
 	// Do all classes match?
 	return AllowedClasses.Difference(Other.AllowedClasses).Num() <= 0 &&

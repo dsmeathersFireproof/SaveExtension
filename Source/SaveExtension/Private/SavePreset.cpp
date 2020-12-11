@@ -2,20 +2,34 @@
 
 #include "SavePreset.h"
 
-#include "SaveFilter.h"
+#include "LevelFilter.h"
 #include "SlotData.h"
 #include "SlotInfo.h"
 
 
 USavePreset::USavePreset()
 	: Super()
-	, SlotInfoTemplate(USlotInfo::StaticClass())
-	, SlotDataTemplate(USlotData::StaticClass())
+	, SlotInfoClass(USlotInfo::StaticClass())
+	, SlotDataClass(USlotData::StaticClass())
 {}
 
-FSaveFilter USavePreset::ToFilter() const
+void USavePreset::BPGetSlotNameFromId_Implementation(int32 Id, FName& Name) const
 {
-	FSaveFilter Filter{};
+	// Call C++ inheritance chain by default
+	return GetSlotNameFromId(Id, Name);
+}
+
+void USavePreset::GetSlotNameFromId(int32 Id, FName& Name) const
+{
+	if (IsValidId(Id))
+	{
+		Name = FName{ FString::FromInt(Id) };
+	}
+}
+
+FSELevelFilter USavePreset::ToFilter() const
+{
+	FSELevelFilter Filter{};
 	Filter.FromPreset(*this);
 	return Filter;
 }

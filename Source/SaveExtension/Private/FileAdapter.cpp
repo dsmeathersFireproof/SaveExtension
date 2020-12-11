@@ -78,7 +78,7 @@ bool FSaveFile::IsEmpty() const
 
 void FSaveFile::Read(FScopedFileReader& Reader, bool bSkipData)
 {
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveFile_Read);
+	TRACE_CPUPROFILER_EVENT_SCOPE(FSaveFile::Read);
 
 	Empty();
 	FArchive& Ar = Reader.GetArchive();
@@ -124,7 +124,7 @@ void FSaveFile::Read(FScopedFileReader& Reader, bool bSkipData)
 		TArray<uint8> CompressedDataBytes;
 		Ar << CompressedDataBytes;
 
-		QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveFile_Decompression);
+		TRACE_CPUPROFILER_EVENT_SCOPE(Decompression);
 		FArchiveLoadCompressedProxy Decompressor(CompressedDataBytes, NAME_Zlib);
 		if (!Decompressor.GetError())
 		{
@@ -144,7 +144,8 @@ void FSaveFile::Read(FScopedFileReader& Reader, bool bSkipData)
 
 void FSaveFile::Write(FScopedFileWriter& Writer, bool bCompressData)
 {
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveFile_Write);
+	TRACE_CPUPROFILER_EVENT_SCOPE(FSaveFile::Write);
+
 	bIsDataCompressed = bCompressData;
 	FArchive& Ar = Writer.GetArchive();
 
@@ -168,7 +169,7 @@ void FSaveFile::Write(FScopedFileWriter& Writer, bool bCompressData)
 		{
 			TArray<uint8> CompressedDataBytes;
 			{ // Compression
-				QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveFile_Compression);
+				TRACE_CPUPROFILER_EVENT_SCOPE(Compression);
 				// Compress Object data
 				FArchiveSaveCompressedProxy Compressor(CompressedDataBytes, NAME_Zlib);
 				Compressor << DataBytes;
@@ -186,7 +187,7 @@ void FSaveFile::Write(FScopedFileWriter& Writer, bool bCompressData)
 
 void FSaveFile::SerializeInfo(USlotInfo* SlotInfo)
 {
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveFile_SerializeInfo);
+	TRACE_CPUPROFILER_EVENT_SCOPE(FSaveFile::SerializeInfo);
 	check(SlotInfo);
 	InfoBytes.Reset();
 	InfoClassName = SlotInfo->GetClass()->GetPathName();
@@ -197,7 +198,7 @@ void FSaveFile::SerializeInfo(USlotInfo* SlotInfo)
 }
 void FSaveFile::SerializeData(USlotData* SlotData)
 {
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_SaveFile_SerializeData);
+	TRACE_CPUPROFILER_EVENT_SCOPE(FSaveFile::SerializeData);
 	check(SlotData);
 	DataBytes.Reset();
 	DataClassName = SlotData->GetClass()->GetPathName();
@@ -207,22 +208,26 @@ void FSaveFile::SerializeData(USlotData* SlotData)
 	SlotData->Serialize(Ar);
 }
 
-USlotInfo* FSaveFile::CreateAndDeserializeInfo() const
+USlotInfo* FSaveFile::CreateAndDeserializeInfo(const UObject* Outer) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FSaveFile::CreateAndDeserializeInfo);
 	UObject* Object = nullptr;
-	FFileAdapter::DeserializeObject(Object, InfoClassName, InfoBytes);
+	FFileAdapter::DeserializeObject(Object, InfoClassName, Outer, InfoBytes);
 	return Cast<USlotInfo>(Object);
 }
 
-USlotData* FSaveFile::CreateAndDeserializeData() const
+USlotData* FSaveFile::CreateAndDeserializeData(const UObject* Outer) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FSaveFile::CreateAndDeserializeData);
 	UObject* Object = nullptr;
-	FFileAdapter::DeserializeObject(Object, DataClassName, DataBytes);
+	FFileAdapter::DeserializeObject(Object, DataClassName, Outer, DataBytes);
 	return Cast<USlotData>(Object);
 }
 
 bool FFileAdapter::SaveFile(FStringView SlotName, USlotInfo* Info, USlotData* Data, const bool bUseCompression)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFileAdapter::SaveFile);
+
 	if (SlotName.IsEmpty())
 	{
 		return false;
@@ -234,9 +239,7 @@ bool FFileAdapter::SaveFile(FStringView SlotName, USlotInfo* Info, USlotData* Da
 		return false;
 	}
 
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_FileAdapter_SaveFile);
-
-	FScopedFileWriter FileWriter(GetSavePath(SlotName));
+	FScopedFileWriter FileWriter(GetSlotPath(SlotName));
 	if(FileWriter.IsValid())
 	{
 		FSaveFile File{};
@@ -248,17 +251,17 @@ bool FFileAdapter::SaveFile(FStringView SlotName, USlotInfo* Info, USlotData* Da
 	return false;
 }
 
-bool FFileAdapter::LoadFile(FStringView SlotName, USlotInfo*& Info, USlotData*& Data, bool bLoadData)
+bool FFileAdapter::LoadFile(FStringView SlotName, USlotInfo*& Info, USlotData*& Data, bool bLoadData, const UObject* Outer)
 {
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_FileAdapter_LoadFile);
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFileAdapter::LoadFile);
 
-	FScopedFileReader Reader(GetSavePath(SlotName));
+	FScopedFileReader Reader(GetSlotPath(SlotName));
 	if(Reader.IsValid())
 	{
 		FSaveFile File{};
 		File.Read(Reader, !bLoadData);
-		Info = File.CreateAndDeserializeInfo();
-		Data = File.CreateAndDeserializeData();
+		Info = File.CreateAndDeserializeInfo(Outer);
+		Data = File.CreateAndDeserializeData(Outer);
 		return true;
 	}
 	return false;
@@ -266,20 +269,31 @@ bool FFileAdapter::LoadFile(FStringView SlotName, USlotInfo*& Info, USlotData*& 
 
 bool FFileAdapter::DeleteFile(FStringView SlotName)
 {
-	return IFileManager::Get().Delete(*GetSavePath(SlotName), true, false, true);
+	return IFileManager::Get().Delete(*GetSlotPath(SlotName), true, false, true);
 }
 
 bool FFileAdapter::DoesFileExist(FStringView SlotName)
 {
-	return IFileManager::Get().FileSize(*GetSavePath(SlotName)) >= 0;
+	return IFileManager::Get().FileSize(*GetSlotPath(SlotName)) >= 0;
 }
 
-FString FFileAdapter::GetSavePath(FStringView FileName)
+const FString& FFileAdapter::GetSaveFolder()
 {
-	return FString::Printf(TEXT("%sSaveGames/%s.sav"), *FPaths::ProjectSavedDir(), FileName.GetData());
+	static const FString Folder = FString::Printf(TEXT("%sSaveGames/"), *FPaths::ProjectSavedDir());
+	return Folder;
 }
 
-void FFileAdapter::DeserializeObject(UObject*& Object, FStringView ClassName, const TArray<uint8>& Bytes)
+FString FFileAdapter::GetSlotPath(FStringView SlotName)
+{
+	return GetSaveFolder() / FString::Printf(TEXT("%s.sav"), SlotName.GetData());
+}
+
+FString FFileAdapter::GetThumbnailPath(FStringView SlotName)
+{
+	return GetSaveFolder() / FString::Printf(TEXT("%s.png"), SlotName.GetData());
+}
+
+void FFileAdapter::DeserializeObject(UObject*& Object, FStringView ClassName, const UObject* Outer, const TArray<uint8>& Bytes)
 {
 	if (ClassName.IsEmpty() || Bytes.Num() <= 0)
 	{
@@ -298,8 +312,12 @@ void FFileAdapter::DeserializeObject(UObject*& Object, FStringView ClassName, co
 
 	if(!Object)
 	{
-		check(IsInGameThread());
-		Object = NewObject<UObject>(GetTransientPackage(), ObjectClass);
+		if(!Outer)
+		{
+			Outer = GetTransientPackage();
+		}
+
+		Object = NewObject<UObject>(const_cast<UObject*>(Outer), ObjectClass);
 	}
 	// Can only reuse object if class matches
 	else if(Object->GetClass() != ObjectClass)

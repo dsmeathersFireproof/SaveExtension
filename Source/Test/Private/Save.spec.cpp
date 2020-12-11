@@ -25,7 +25,12 @@ class FSaveSpec_Preset : public Automatron::FTestSpec
 		DefaultWorldSettings.bShouldTick = true;
 	}
 
-	USavePreset* CreateTestPreset();
+	void TickUntilSaveTasksFinish()
+	{
+		TickWorldUntil(GetMainWorld(), true, [this](float) {
+			return SaveManager->HasTasks();
+		});
+	}
 };
 
 void FSaveSpec_Preset::Define()
@@ -33,21 +38,30 @@ void FSaveSpec_Preset::Define()
 	BeforeEach([this]() {
 		SaveManager = USaveManager::Get(GetMainWorld());
 		TestNotNull(TEXT("SaveManager"), SaveManager);
+
+		SaveManager->bTickWithGameWorld = true;
 	});
 
 	It("SaveManager is instanced", [this]() {
 		TestNotNull(TEXT("SaveManager"), SaveManager);
 	});
 
+	Describe("Maps", [this]() {
+		It("Can load into a different map", [this]() {
+			TestNotImplemented();
+		});
+		It("Actors are recreated when loading from a different map", [this]() {
+			TestNotImplemented();
+		});
+	});
+
 	Describe("Serialization", [this]() {
 		BeforeEach([this]() {
-			TestPreset = CreateTestPreset();
+			TestPreset = SaveManager->SetActivePreset(USavePreset::StaticClass());
 			TestPreset->ActorFilter.ClassFilter.AllowedClasses.Add(ATestActor::StaticClass());
 
 			// We don't need Async files are tested independently
 			TestPreset->MultithreadedFiles = ESaveASyncMode::OnlySync;
-
-			SaveManager->SetActivePreset(TestPreset);
 
 			TestActor = GetMainWorld()->SpawnActor<ATestActor>();
 		});
@@ -76,6 +90,8 @@ void FSaveSpec_Preset::Define()
 
 				TestActor->bMyBool = false;
 				SaveManager->LoadSlot(0);
+
+				TickUntilSaveTasksFinish();
 				TestTrue("bool was saved", TestActor->bMyBool);
 			});
 
@@ -191,10 +207,4 @@ void FSaveSpec_Preset::Define()
 		}
 		SaveManager = nullptr;
 	});
-}
-
-USavePreset* FSaveSpec_Preset::CreateTestPreset()
-{
-	USavePreset* Preset = NewObject<USavePreset>(GetMainWorld());
-	return Preset;
 }

@@ -34,26 +34,25 @@ public:
 
 	/** Full Name of the Map where this SlotData was saved */
 	UPROPERTY(Category = SaveData, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
-	FString Map;
+	FName Map;
 
 	/** Game world time since game started in seconds */
 	UPROPERTY(Category = SaveData, BlueprintReadOnly)
 	float TimeSeconds;
 
-
 	/** Records
 	 * All serialized information to be saved or loaded
 	 * Serialized manually for performance
 	 */
-
+	bool bStoreGameInstance = false;
 	FObjectRecord GameInstance;
 
+	FSELevelFilter GeneralLevelFilter;
 	FPersistentLevelRecord MainLevel;
 	TArray<FStreamingLevelRecord> SubLevels;
 
 
-	void Clean(bool bKeepLevels);
-	FName GetFMap() const { return { *Map }; }
+	void CleanRecords(bool bKeepSublevels);
 
 	/** Using manual serialization. It's way faster than reflection serialization */
 	virtual void Serialize(FArchive& Ar) override;

@@ -23,20 +23,22 @@ void USlotData::Serialize(FArchive& Ar)
 {
 	Super::Serialize(Ar);
 
+	Ar << bStoreGameInstance;
 	Ar << GameInstance;
 
+	static UScriptStruct* const LevelFilterType{ FSELevelFilter::StaticStruct() };
+	LevelFilterType->SerializeItem(Ar, &GeneralLevelFilter, nullptr);
 	MainLevel.Serialize(Ar);
 	Ar << SubLevels;
 }
 
-void USlotData::Clean(bool bKeepLevels)
+void USlotData::CleanRecords(bool bKeepSublevels)
 {
 	//Clean Up serialization data
 	GameInstance = {};
 
-	MainLevel.Clean();
-
-	if (!bKeepLevels)
+	MainLevel.CleanRecords();
+	if (!bKeepSublevels)
 	{
 		SubLevels.Empty();
 	}

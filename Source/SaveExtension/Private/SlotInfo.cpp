@@ -14,10 +14,14 @@
 UTexture2D* USlotInfo::GetThumbnail() const
 {
 	if (ThumbnailPath.IsEmpty())
+	{
 		return nullptr;
+	}
 
 	if (CachedThumbnail)
+	{
 		return CachedThumbnail;
+	}
 
 	// Load thumbnail as Texture2D
 	UTexture2D* Texture{ nullptr };
@@ -45,15 +49,14 @@ UTexture2D* USlotInfo::GetThumbnail() const
 
 bool USlotInfo::CaptureThumbnail(const int32 Width /*= 640*/, const int32 Height /*= 360*/)
 {
-	if (!GEngine || !GEngine->GameViewport)
+	if (!GEngine || !GEngine->GameViewport || FileName.IsNone())
 	{
 		return false;
 	}
 
 	if (auto* Viewport = GEngine->GameViewport->Viewport)
 	{
-		// TODO: Extract thumbnail path/name format to a function
-		_SetThumbnailPath(FString::Printf(TEXT("%sSaveGames/%i_%s.%s"), *FPaths::ProjectSavedDir(), Id, *FString("SaveScreenshot"), TEXT("png")));
+		_SetThumbnailPath(FFileAdapter::GetThumbnailPath(FileName.ToString()));
 
 		// TODO: Removal of a thumbnail should be standarized in a function
 		IFileManager& FM = IFileManager::Get();
